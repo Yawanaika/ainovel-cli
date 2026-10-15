@@ -388,7 +388,7 @@ func TestMigrateLegacyBaselineAcceptsMissingSummary(t *testing.T) {
 	}
 }
 
-func TestMigrateLegacyBaselineDropsContradictoryForeshadow(t *testing.T) {
+func TestMigrateLegacyBaselineRestoresPlantDroppedFromExistingRecord(t *testing.T) {
 	st := newRevisionTestStore(t, 2)
 	facts1 := domain.ChapterFacts{Title: "第一章", Summary: "旧章", KeyEvents: []string{"事件"}}
 	facts2 := domain.ChapterFacts{Title: "第二章", Summary: "新章", KeyEvents: []string{"事件"}}
@@ -410,6 +410,47 @@ func TestMigrateLegacyBaselineDropsContradictoryForeshadow(t *testing.T) {
 	record, err := st.ChapterRecords.Load(1)
 	if err != nil || record == nil || len(record.Facts.ForeshadowUpdates) != 0 {
 		t.Fatalf("record 1 = %+v, err = %v", record, err)
+	}
+	record, err = st.ChapterRecords.Load(2)
+	want := []domain.ForeshadowUpdate{{ID: "孤儿", Action: "plant", Description: "无主伏笔"}}
+	if err != nil || record == nil || !reflect.DeepEqual(record.Facts.ForeshadowUpdates, want) {
+		t.Fatalf("record 2 = %+v, err = %v", record, err)
+	}
+}
+
+// 复现 #128：v0.7.6 返工覆盖了第 1 章记录、丢掉 plant，后续章节的 advance 让 v2→v3
+// 升级在重放时报"推进未知伏笔"，整本书打不开。
+func TestMigrateLegacyBaselineRepairsChainBrokenByOldRework(t *testing.T) {
+	st := newRevisionTestStore(t, 2)
+	acceptTestChapter(t, st, 1, "返工后的第一章", domain.ChapterFacts{
+		Title: "第一章", Summary: "返工丢了埋设", KeyEvents: []string{"出发"},
+	})
+	facts2 := domain.ChapterFacts{
+		Title: "第二章", Summary: "推进线索", KeyEvents: []string{"追查"},
+		ForeshadowUpdates: []domain.ForeshadowUpdate{{ID: "F1", Action: "advance"}},
+	}
+	acceptTestChapter(t, st, 2, "第二章正文", facts2)
+	if err := st.World.SaveForeshadowLedger([]domain.ForeshadowEntry{{
+		ID: "F1", Description: "执照暂停线索", PlantedAt: 1, Status: "advanced",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := st.ChapterRecords.Load(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MigrateLegacyBaseline(st); err != nil {
+		t.Fatalf("旧版返工丢失的 plant 应在升级时补回: %v", err)
+	}
+	record, err := st.ChapterRecords.Load(1)
+	want := []domain.ForeshadowUpdate{{ID: "F1", Action: "plant", Description: "执照暂停线索"}}
+	if err != nil || record == nil || !reflect.DeepEqual(record.Facts.ForeshadowUpdates, want) {
+		t.Fatalf("record 1 = %+v, err = %v", record, err)
+	}
+	after, err := st.ChapterRecords.Load(2)
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("record 2 changed: before=%+v after=%+v err=%v", before, after, err)
 	}
 }
 

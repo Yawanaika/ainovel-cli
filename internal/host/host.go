@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -392,6 +393,10 @@ func (h *Host) StartPrepared(rawRequirement string) error {
 	if err := h.refuseNewBookOverExisting(); err != nil {
 		return err
 	}
+	// 导入门禁先于下面的进度重置与启动裁定：否则白花一次模型调用、改掉半导入书的状态后才被拦下。
+	if err := h.refuseOverUnfinishedImport(); err != nil {
+		return err
+	}
 	if err := h.budget.Refuse(); err != nil {
 		return err
 	}
@@ -467,21 +472,26 @@ func (h *Host) refuseNewBookOverExisting() error {
 		name, len(progress.CompletedChapters))
 }
 
+// refuseOverUnfinishedImport 是跨重启门禁：存在未完成导入工作区时，禁止普通 Engine
+// 消费半发布状态（RFC §12.5）。
+func (h *Host) refuseOverUnfinishedImport() error {
+	active, done, err := imp.ResumeStatus(h.store)
+	if err != nil {
+		return fmt.Errorf("导入状态读取失败，已阻止普通创作覆盖现有工件：%w", err)
+	}
+	if active && !done {
+		return errors.New("存在未完成的外部小说导入，请先执行 /import 恢复完成后再继续创作")
+	}
+	return nil
+}
+
 // startEngine 统一的引擎启动入口(Start/Resume/Continue/干预重启共用)。
 // lifecycle 必须先于 goroutine 启动置为 running:引擎可能立即结束(完本/无路由),
 // runEnded 会把 lifecycle 落到终态;若顺序颠倒,runEnded 先跑、这里再写 running,
 // UI 将永远显示"运行中"而引擎实际已停。
 func (h *Host) startEngine(initial *flow.Instruction) bool {
-	// 跨重启门禁：存在未完成导入工作区时，禁止普通 Engine 消费半发布状态（RFC §12.5）。
-	active, done, importErr := imp.ResumeStatus(h.store)
-	if importErr != nil {
-		h.emitEvent(Event{Time: time.Now(), Category: "ERROR", Level: "error",
-			Summary: "导入状态读取失败，已阻止普通创作覆盖现有工件：" + importErr.Error()})
-		return false
-	}
-	if active && !done {
-		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Level: "warn",
-			Summary: "存在未完成的外部小说导入，请先执行 /import 恢复完成后再继续创作"})
+	if err := h.refuseOverUnfinishedImport(); err != nil {
+		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Level: "warn", Summary: err.Error()})
 		return false
 	}
 	h.mu.Lock()
@@ -1770,11 +1780,8 @@ func (h *Host) importModelRuntime(role string, model agentcore.ChatModel) imp.Mo
 		name = bootstrap.ModelName(model)
 		provider = bootstrap.ModelProvider(model)
 	}
-	// context / completion 上限：registry 是唯一可信来源（被包装模型的 Info() 不含窗口）。
+	// context 上限：被包装模型的 Info() 不含窗口，按配置与 registry 解析。
 	rt.ContextTokens, _ = h.cfg.ResolveContextWindow(provider, name)
-	if entry, ok := modelreg.DefaultRegistry().Resolve(name); ok {
-		rt.MaxOutputTokens = entry.MaxTokens
-	}
 	// thinking：按角色 reasoning effort 与模型能力 resolve；不支持则不发（与 arbiter 同策略）。
 	if level, err := agents.ParseThinkingLevel(h.cfg.ResolveReasoningEffort(role)); err == nil {
 		if resolved, ok := agents.ResolveThinkingForModel(model, level); ok {

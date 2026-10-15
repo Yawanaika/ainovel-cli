@@ -131,7 +131,9 @@ func coCreateStream(ctx context.Context, models *bootstrap.ModelSet, sessions *s
 		}
 	}()
 
-	streamCh, err := model.GenerateStream(ctx, msgs, nil, agentcore.WithMaxTokens(2048))
+	// 不另设输出上限：思考 token 与回复共享 max_tokens，收窄会让推理模型把预算耗在
+	// 思考上、回复为空或被截断。
+	streamCh, err := model.GenerateStream(ctx, msgs, nil)
 	if err != nil {
 		return CoCreateReply{}, fmt.Errorf("cocreate generate: %w", err)
 	}
@@ -162,17 +164,7 @@ func coCreateStream(ctx context.Context, models *bootstrap.ModelSet, sessions *s
 		}
 	}
 
-	// Channel fallback：思考型模型（R1/GLM-Z1/QwQ 等）偶发把完整答案写进
-	// reasoning_content 后没切回 final answer 通道，导致 raw 为空但 thinking 含
-	// 完整四段。实测见 meta/sessions/cocreate.jsonl —— 直接拿 thinking 当 raw 解析，
-	// 协议层已有降级处理（无 [REPLY] 标记时整段当 reply），救场后 UI 体验无差别。
-	rawText := raw.String()
-	if strings.TrimSpace(rawText) == "" {
-		if t := strings.TrimSpace(thinking.String()); t != "" {
-			rawText = t
-		}
-	}
-	reply, err = parseCoCreateResponse(rawText)
+	reply, err = parseCoCreateResponse(raw.String())
 	return reply, err
 }
 

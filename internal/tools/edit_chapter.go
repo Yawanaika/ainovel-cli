@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/voocel/agentcore/schema"
 	agentcoretools "github.com/voocel/agentcore/tools"
@@ -113,6 +114,19 @@ func (t *EditChapterTool) Execute(ctx context.Context, args json.RawMessage) (js
 	// Seed：drafts 不存在时从 chapters 复制一份作为起点
 	if err := t.ensureDraft(a.Chapter); err != nil {
 		return nil, err
+	}
+
+	// agentcore v1.8.3 的 edit 在精确与宽松匹配都失败后，会对三行及以上的 old_string
+	// 按首尾行锚定整块替换，中间对不上的正文被静默删掉（上游 v1.8.5 已删除这一级）。
+	// 这类多行编辑必须逐字命中草稿，不交给上游去猜。
+	if old := strings.ReplaceAll(a.OldString, "\r\n", "\n"); strings.Count(strings.TrimSuffix(old, "\n"), "\n") >= 2 {
+		draft, err := t.store.Drafts.LoadDraft(a.Chapter)
+		if err != nil {
+			return nil, fmt.Errorf("load draft: %w: %w", errs.ErrStoreRead, err)
+		}
+		if !strings.Contains(strings.ReplaceAll(draft, "\r\n", "\n"), old) {
+			return nil, fmt.Errorf("多行 old_string 未在第 %d 章草稿中逐字出现：请重新 read_chapter(source=\"draft\") 后逐字复制，或只改一两行: %w", a.Chapter, errs.ErrToolPrecondition)
+		}
 	}
 
 	// 委托 agentcore.EditTool 完成找-换

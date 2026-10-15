@@ -230,8 +230,8 @@ func TestStoryChoiceIgnoresStaleResolution(t *testing.T) {
 // TestBudgetsFromDepsPerTier 守护档位旋钮（RFC §13.1）：各语义函数预算按各自档位派生，
 // 廉价档位的小窗口只约束它自己的函数，不拖累其它阶段。
 func TestBudgetsFromDepsPerTier(t *testing.T) {
-	small := ModelRuntime{ContextTokens: 32000, MaxOutputTokens: 4000}
-	big := ModelRuntime{ContextTokens: 200000, MaxOutputTokens: 16000}
+	small := ModelRuntime{ContextTokens: 32000}
+	big := ModelRuntime{ContextTokens: 400000}
 	b := budgetsFromDeps(Deps{
 		Segment:    Caller{Runtime: small},
 		Analyze:    Caller{Runtime: big},
@@ -240,7 +240,7 @@ func TestBudgetsFromDepsPerTier(t *testing.T) {
 	if b.SegmentChunkBytes >= b.Analyze.ContextBytes {
 		t.Fatalf("segment 小档位窗口应只约束自身：seg=%d analyze=%d", b.SegmentChunkBytes, b.Analyze.ContextBytes)
 	}
-	if b.Analyze.MaxOutputTokens != 16000 || b.SegmentMaxTokens != 4000 {
+	if b.Analyze.MaxOutputTokens != maxOutputTokens || b.SegmentMaxTokens != 8000 {
 		t.Fatalf("输出预算应各取自身档位上限：analyze=%d segment=%d", b.Analyze.MaxOutputTokens, b.SegmentMaxTokens)
 	}
 }
@@ -348,13 +348,14 @@ func TestBudgetsFromRuntime(t *testing.T) {
 	if got := budgetsFromRuntime(ModelRuntime{}); got != DefaultRunBudgets() {
 		t.Fatal("能力未知应回退保守默认")
 	}
-	small := budgetsFromRuntime(ModelRuntime{ContextTokens: 32000, MaxOutputTokens: 4000})
-	big := budgetsFromRuntime(ModelRuntime{ContextTokens: 200000, MaxOutputTokens: 16000})
+	small := budgetsFromRuntime(ModelRuntime{ContextTokens: 32000})
+	big := budgetsFromRuntime(ModelRuntime{ContextTokens: 1000000})
 	if big.Analyze.ContextBytes <= small.Analyze.ContextBytes {
 		t.Fatalf("更大 context 应放大 analyze 输入预算：small=%d big=%d", small.Analyze.ContextBytes, big.Analyze.ContextBytes)
 	}
-	if big.Analyze.MaxOutputTokens != 16000 {
-		t.Fatalf("输出预算应取模型 completion 上限，得 %d", big.Analyze.MaxOutputTokens)
+	// 输出预算按上下文 1/4 放大，但不超过与写作 agent 一致的上限，避免超出厂商接口限制。
+	if small.Analyze.MaxOutputTokens != 8000 || big.Analyze.MaxOutputTokens != maxOutputTokens {
+		t.Fatalf("输出预算：small=%d big=%d", small.Analyze.MaxOutputTokens, big.Analyze.MaxOutputTokens)
 	}
 }
 

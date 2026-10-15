@@ -560,15 +560,9 @@ func (t *CommitChapterTool) executeRewriteCommit(a commitArgs, progress *domain.
 		if err != nil {
 			return nil, fmt.Errorf("rewrite: load chapter record: %w: %w", errs.ErrStoreRead, err)
 		}
-		var existingUpdates []domain.ForeshadowUpdate
 		var style domain.StyleDelta
 		if existing != nil {
-			existingUpdates = existing.Facts.ForeshadowUpdates
 			style = existing.StyleDelta
-		}
-		recovered, err := t.restoreRewritePlants(chapter, existingUpdates, &a.ChapterFacts)
-		if err != nil {
-			return nil, err
 		}
 		candidate, err := t.store.ChapterRecords.Prepare(
 			chapter, domain.ChapterOriginGenerated, content, a.ChapterFacts, style,
@@ -606,9 +600,6 @@ func (t *CommitChapterTool) executeRewriteCommit(a commitArgs, progress *domain.
 		}
 		if err := t.store.ChapterRecords.Save(*candidate); err != nil {
 			return nil, fmt.Errorf("rewrite: save chapter record: %w: %w", errs.ErrStoreWrite, err)
-		}
-		if len(recovered) > 0 {
-			slog.Warn("已从伏笔账本恢复旧版本丢失的种植事实", "module", "commit", "chapter", chapter, "foreshadows", recovered)
 		}
 		if err := revision.NewProjector(t.store).Apply(records); err != nil {
 			return nil, fmt.Errorf("rewrite: rebuild chapter projections: %w: %w", errs.ErrStoreWrite, err)
@@ -725,50 +716,6 @@ func (t *CommitChapterTool) executeRewriteCommit(a commitArgs, progress *domain.
 
 	t.refreshStyleStats(chapter, content)
 	return output, nil
-}
-
-// restoreRewritePlants 只修复旧版本已经造成的单一损坏形态：伏笔账本仍记录本章
-// 的 plant，但本章接纳记录已被失败返工覆盖。账本给出完整 id、描述和种植章，
-// 因而可以确定性还原；其他不一致继续显式报错，不猜测剧情事实。
-func (t *CommitChapterTool) restoreRewritePlants(chapter int, existing []domain.ForeshadowUpdate, facts *domain.ChapterFacts) ([]string, error) {
-	planted := make(map[string]struct{}, len(existing)+len(facts.ForeshadowUpdates))
-	for _, update := range existing {
-		if update.Action == "plant" {
-			planted[update.ID] = struct{}{}
-		}
-	}
-	for _, update := range facts.ForeshadowUpdates {
-		if update.Action == "plant" {
-			planted[update.ID] = struct{}{}
-		}
-	}
-
-	ledger, err := t.store.World.LoadForeshadowLedger()
-	if err != nil {
-		return nil, fmt.Errorf("rewrite: load foreshadow ledger for recovery: %w: %w", errs.ErrStoreRead, err)
-	}
-	var restored []domain.ForeshadowUpdate
-	var ids []string
-	for _, entry := range ledger {
-		if entry.PlantedAt != chapter {
-			continue
-		}
-		if _, ok := planted[entry.ID]; ok {
-			continue
-		}
-		if strings.TrimSpace(entry.ID) == "" || strings.TrimSpace(entry.Description) == "" {
-			return nil, fmt.Errorf("rewrite: 第 %d 章伏笔账本缺少可恢复的 id 或 description: %w", chapter, errs.ErrToolConflict)
-		}
-		planted[entry.ID] = struct{}{}
-		restored = append(restored, domain.ForeshadowUpdate{
-			ID: entry.ID, Action: "plant", Description: entry.Description,
-		})
-		ids = append(ids, entry.ID)
-	}
-	if len(restored) > 0 {
-		facts.ForeshadowUpdates = append(restored, facts.ForeshadowUpdates...)
-	}
-	return ids, nil
 }
 
 func (t *CommitChapterTool) refreshStyleStats(chapter int, content string) {

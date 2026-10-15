@@ -14,9 +14,9 @@ import (
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
-// MigrateLegacyBaseline 从旧版业务投影逆向生成章节记录。会话日志不是作品事实，
-// 因此不参与迁移。保存前正向投影一次与原状态比对，有出入只记日志：升级不改磁盘上的
-// 世界状态，也不因此拦住用户。
+// MigrateLegacyBaseline 从旧版业务投影逆向生成缺失的章节记录；已有记录只补回旧版返工
+// 丢掉的伏笔埋设。会话日志不是作品事实，因此不参与迁移。保存前正向投影一次与原状态
+// 比对，有出入只记日志：升级不改磁盘上的世界状态，也不因此拦住用户。
 func MigrateLegacyBaseline(st *store.Store) error {
 	progress, err := st.Progress.Load()
 	if err != nil {
@@ -41,8 +41,16 @@ func MigrateLegacyBaseline(st *store.Store) error {
 		}
 		missing[chapter] = true
 	}
+	ledger, err := st.World.LoadForeshadowLedger()
+	if err != nil {
+		return fmt.Errorf("读取伏笔账本: %w", err)
+	}
+	updated := restoreDroppedPlants(existing, ledger)
 	if len(missing) == 0 {
-		return ValidateRecords(existing)
+		if err := ValidateRecords(existing); err != nil {
+			return err
+		}
+		return saveBaseline(st, updated)
 	}
 
 	previous, err := loadLegacyProjection(st, chapters, progress)
@@ -81,12 +89,53 @@ func MigrateLegacyBaseline(st *store.Store) error {
 	}
 	for _, chapter := range chapters {
 		if record := pending[chapter]; record != nil {
-			if err := st.ChapterRecords.Save(*record); err != nil {
-				return fmt.Errorf("保存第 %d 章修订基线: %w", chapter, err)
-			}
+			updated = append(updated, *record)
+		}
+	}
+	return saveBaseline(st, updated)
+}
+
+func saveBaseline(st *store.Store, records []domain.ChapterRecord) error {
+	for _, record := range records {
+		if err := st.ChapterRecords.Save(record); err != nil {
+			return fmt.Errorf("保存第 %d 章修订基线: %w", record.Chapter, err)
 		}
 	}
 	return nil
+}
+
+// restoreDroppedPlants 修复 v0.7.6 及更早版本返工留下的损坏：返工提交覆盖了章节记录、
+// 丢掉本章的 plant，随后重建投影失败，账本因而仍保留这条埋设。账本给出 id、描述和
+// 种植章，补回是确定性还原。原地修改 records，返回被修改的记录。
+func restoreDroppedPlants(records []domain.ChapterRecord, ledger []domain.ForeshadowEntry) []domain.ChapterRecord {
+	planted := make(map[string]bool)
+	for _, record := range records {
+		for _, update := range record.Facts.ForeshadowUpdates {
+			if update.Action == "plant" {
+				planted[update.ID] = true
+			}
+		}
+	}
+	dropped := make(map[int][]domain.ForeshadowUpdate)
+	for _, entry := range ledger {
+		if entry.ID == "" || entry.Description == "" || planted[entry.ID] {
+			continue
+		}
+		planted[entry.ID] = true
+		dropped[entry.PlantedAt] = append(dropped[entry.PlantedAt],
+			domain.ForeshadowUpdate{ID: entry.ID, Action: "plant", Description: entry.Description})
+	}
+	var updated []domain.ChapterRecord
+	for i := range records {
+		plants := dropped[records[i].Chapter]
+		if len(plants) == 0 {
+			continue
+		}
+		records[i].Facts.ForeshadowUpdates = domain.RestoreOwnPlants(plants, records[i].Facts.ForeshadowUpdates)
+		updated = append(updated, records[i])
+		slog.Warn("已从伏笔账本补回旧版返工丢失的伏笔埋设", "module", "migration", "chapter", records[i].Chapter, "count", len(plants))
+	}
+	return updated
 }
 
 func loadLegacyProjection(st *store.Store, chapters []int, progress *domain.Progress) (projection, error) {

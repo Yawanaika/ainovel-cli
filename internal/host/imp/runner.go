@@ -58,12 +58,11 @@ func DefaultRunBudgets() RunBudgets {
 }
 
 // ModelRuntime 承载 imp 语义调用所需的模型能力事实，由 Host 在边界探测后注入（RFC §13/§17）。
-// 让双预算随 context/completion 自然放大、thinking 随能力发送；全零值时回退保守默认，
+// 让预算随 context 自然放大、thinking 随能力发送；全零值时回退保守默认，
 // 行为与接入能力前一致。结构化输出不按 provider 能力发 response_format（见 callProfile 注释）。
 type ModelRuntime struct {
-	ContextTokens   int                     // 输入上下文上限（token）
-	MaxOutputTokens int                     // 单次可见输出上限（token）
-	Thinking        agentcore.ThinkingLevel // 已按能力 resolve；ThinkingAuto("") 表示不显式发送
+	ContextTokens int                     // 输入上下文上限（token）
+	Thinking      agentcore.ThinkingLevel // 已按能力 resolve；ThinkingAuto("") 表示不显式发送
 }
 
 // profile 派生本运行时的调用能力选项（thinking）。
@@ -79,14 +78,20 @@ type Caller struct {
 	Runtime ModelRuntime
 }
 
-// budgetsFromRuntime 从模型真实 context/completion 上限派生各语义函数预算（RFC §9.2/§21）。
+// maxOutputTokens 是导入单次调用的输出上限，与写作 agent 的默认输出上限（agentcore 65536）
+// 一致：厂商接受写作请求就接受导入请求。不取模型目录的 completion 上限——那是聚合网关
+// 报的值，不是厂商接口的限制（如 GLM 目录值远超智谱接口的 131072，会被直接 400）。
+const maxOutputTokens = 65536
+
+// budgetsFromRuntime 从模型真实 context 上限派生各语义函数预算（RFC §9.2/§21）。
 // 这才让「换更强模型自动扩大批次、减少调用次数」成立；能力未知时回退保守默认。
 func budgetsFromRuntime(rt ModelRuntime) RunBudgets {
-	if rt.ContextTokens <= 0 || rt.MaxOutputTokens <= 0 {
+	if rt.ContextTokens <= 0 {
 		return DefaultRunBudgets()
 	}
 	const bytesPerToken = 3 // 中文 UTF-8 保守换算：token→字节（偏低估容量更安全）
-	out := rt.MaxOutputTokens
+	// 输出最多占上下文的 1/4，小窗口模型不至于被输出预留挤掉输入。
+	out := min(rt.ContextTokens/4, maxOutputTokens)
 	// 输入预算：上下文扣掉可见输出与 ~10% 推理/系统预留后按字节换算。
 	reserve := rt.ContextTokens / 10
 	inTokens := rt.ContextTokens - out - reserve
@@ -167,7 +172,7 @@ func Run(ctx context.Context, deps Deps, opts Options) (<-chan Event, error) {
 		"segment_ctx", deps.Segment.Runtime.ContextTokens,
 		"analyze_ctx", deps.Analyze.Runtime.ContextTokens,
 		"synthesize_ctx", deps.Synthesize.Runtime.ContextTokens,
-		"analyze_max_output", deps.Analyze.Runtime.MaxOutputTokens,
+		"analyze_max_output", deps.Budgets.Analyze.MaxOutputTokens,
 		"analyze_context_bytes", deps.Budgets.Analyze.ContextBytes)
 	events := make(chan Event, 32)
 	go func() {

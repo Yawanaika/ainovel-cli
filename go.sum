@@ -52,8 +52,8 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/voocel/agentcore v1.8.3 h1:nTUVWlxRc+8FAO1S5xAtpjjOSiswnJooMsRKO/imSlU=
 github.com/voocel/agentcore v1.8.3/go.mod h1:Tij8s6u/yeZflOKgKiqgNxzvejmF9BRnLKIfuS3lYFE=
-github.com/voocel/litellm v1.8.10 h1:D81X9D6yhm+Tnz1T+UXd/5HQKW5Z0xDwYBhHHdwqVnw=
-github.com/voocel/litellm v1.8.10/go.mod h1:6MBUu3I4DHm7h72Vl+3nqLruSwYmgqMf/I9BGoordJ4=
+github.com/voocel/litellm v1.8.11 h1:nxfiQC6fucmSlmO70MaWh41tTzZyondJac+rgPDH1uQ=
+github.com/voocel/litellm v1.8.11/go.mod h1:6MBUu3I4DHm7h72Vl+3nqLruSwYmgqMf/I9BGoordJ4=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e h1:JVG44RsyaB9T2KIHavMF/ppJZNG9ZpyihvCd0w101no=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e/go.mod h1:RbqR21r5mrJuqunuUZ/Dhy/avygyECGrLceyNeo4LiM=
 golang.org/x/exp v0.0.0-20231006140011-7918f672742d h1:jtJma62tbqLibJ5sFQz8bKtEM8rJBtfilJ2qTU199MI=

@@ -407,3 +407,33 @@ func TestEditChapterRejectsPlanningPhaseBeforeMutation(t *testing.T) {
 		t.Fatalf("planning phase edit mutated draft: %q", got)
 	}
 }
+
+// TestEditChapterRejectsMultilineOldStringNotInDraft 多行 old_string 只有首尾两行对得上时，
+// agentcore v1.8.3 的首尾行锚点匹配会把中间的正文整块替换掉；必须拒绝而不是静默删段。
+func TestEditChapterRejectsMultilineOldStringNotInDraft(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init(10); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	enterEditWritingPhase(t, s)
+	draft := "第一段。\n\n第二段。\n\n第三段。\n\n第四段。\n"
+	if err := s.Drafts.SaveDraft(2, draft); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+	queueCompletedChapterForEdit(t, s, 2, len([]rune(draft)))
+
+	args, _ := json.Marshal(map[string]any{
+		"chapter":    2,
+		"old_string": "第一段。\n\n凭记忆重构的中段。\n\n第四段。",
+		"new_string": "第一段。\n\n改写后的中段。\n\n第四段。",
+	})
+	if _, err := NewEditChapterTool(s).Execute(context.Background(), args); err == nil {
+		t.Fatal("多行 old_string 未逐字出现时应拒绝")
+	}
+	if got, err := s.Drafts.LoadDraft(2); err != nil || got != draft {
+		t.Fatalf("草稿不应被改动：%q err=%v", got, err)
+	}
+}

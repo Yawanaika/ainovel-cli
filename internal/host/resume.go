@@ -38,7 +38,7 @@ func runProjectUpgrades(st *storepkg.Store) error {
 				return fmt.Errorf("升级项目数据 v%d→v%d: %w", version, next, err)
 			}
 		case storepkg.ChapterRecordProjectFormatVersion:
-			// v3 补齐 v2 可能遗漏的接纳记录；已有记录由迁移函数原样保留。
+			// v3 补齐 v2 可能遗漏的接纳记录；已有记录只补回旧版返工丢掉的伏笔埋设。
 			if err := revision.MigrateLegacyBaseline(st); err != nil {
 				return fmt.Errorf("升级项目数据 v%d→v%d: %w", version, next, err)
 			}

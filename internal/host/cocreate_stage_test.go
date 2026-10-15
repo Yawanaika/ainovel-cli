@@ -2,6 +2,8 @@ package host
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -255,5 +257,27 @@ func TestBuildStoryStateSummaryUsesDynamicPlanningWording(t *testing.T) {
 	}
 	if strings.Contains(got, "66") || strings.Contains(got, "规划 2 章") {
 		t.Fatalf("动态规划摘要不得暗示固定总章数:\n%s", got)
+	}
+}
+
+// 导入失败留下工作区后开新书：须在重置进度与启动裁定之前报出真实原因，
+// 而不是先花一次模型调用、改掉状态，再报"Engine 已在运行"。
+func TestStartPreparedRefusesUnfinishedImportFirst(t *testing.T) {
+	st := store.NewStore(t.TempDir())
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(st.Dir(), "meta", "import"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := newFlagTestHost(lifecycleIdle, false)
+	h.store = st
+
+	err := h.StartPrepared("写个新故事")
+	if err == nil || !strings.Contains(err.Error(), "导入") {
+		t.Fatalf("应报未完成导入，得 %v", err)
+	}
+	if progress, err := st.Progress.Load(); err != nil || progress != nil {
+		t.Fatalf("被拒前不应初始化进度：progress=%+v err=%v", progress, err)
 	}
 }
